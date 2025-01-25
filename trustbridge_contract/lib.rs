@@ -2,140 +2,191 @@
 
 #[ink::contract]
 mod trustbridge_contract {
+    use ink::prelude::vec::Vec;
+    use ink::storage::Mapping;
 
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
+    /// Define the contract's storage structure.
     #[ink(storage)]
-    pub struct TrustbridgeContract {
-        /// Stores a single `bool` value on the storage.
-        value: bool,
+    pub struct EscrowContract {
+        /// The owner of the contract (the one who deposits funds).
+        owner: AccountId,
+        /// The beneficiary of the contract (the one who receives funds).
+        beneficiary: AccountId,
+        /// The amount of funds deposited in the contract.
+        funds: Balance,
+        /// Indicates whether the funds have been released.
+        is_released: bool,
+        /// Indicates whether the contract has been canceled.
+        is_cancelled: bool,
     }
 
-    impl TrustbridgeContract {
-        /// Constructor that initializes the `bool` value to the given `init_value`.
+    /// Define custom errors for the contract.
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        /// Only the owner can perform this action.
+        NotOwner,
+        /// Only the beneficiary can perform this action.
+        NotBeneficiary,
+        /// The contract has already been finalized (released or canceled).
+        AlreadyFinalized,
+        /// There are insufficient funds in the contract.
+        InsufficientFunds,
+    }
+
+    impl EscrowContract {
+        /// Constructor that initializes the contract with an owner and a beneficiary.
         #[ink(constructor)]
-        pub fn new(init_value: bool) -> Self {
-            Self { value: init_value }
+        pub fn new(owner: AccountId, beneficiary: AccountId) -> Self {
+            Self {
+                owner,
+                beneficiary,
+                funds: 0,
+                is_released: false,
+                is_cancelled: false,
+            }
         }
 
-        /// Constructor that initializes the `bool` value to `false`.
-        ///
-        /// Constructors can delegate to other constructors.
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new(Default::default())
+        /// Allows the owner to deposit funds into the contract.
+        #[ink(message, payable)]
+        pub fn deposit(&mut self) -> Result<(), Error> {
+            let caller = self.env().caller();
+            if caller != self.owner {
+                return Err(Error::NotOwner);
+            }
+
+            // Add the transferred funds to the contract.
+            self.funds += self.env().transferred_value();
+            Ok(())
         }
 
-        /// A message that can be called on instantiated contracts.
-        /// This one flips the value of the stored `bool` from `true`
-        /// to `false` and vice versa.
+        /// Allows the beneficiary to release the funds.
         #[ink(message)]
-        pub fn flip(&mut self) {
-            self.value = !self.value;
+        pub fn release_funds(&mut self) -> Result<(), Error> {
+            let caller = self.env().caller();
+            if caller != self.beneficiary {
+                return Err(Error::NotBeneficiary);
+            }
+
+            if self.is_released || self.is_cancelled {
+                return Err(Error::AlreadyFinalized);
+            }
+
+            if self.funds == 0 {
+                return Err(Error::InsufficientFunds);
+            }
+
+            // Mark the funds as released.
+            self.is_released = true;
+
+            // Transfer the funds to the beneficiary.
+            self.env()
+                .transfer(self.beneficiary, self.funds)
+                .expect("Transfer failed");
+
+            Ok(())
         }
 
-        /// Simply returns the current value of our `bool`.
+        /// Allows the owner to cancel the contract and refund the funds.
         #[ink(message)]
-        pub fn get(&self) -> bool {
-            self.value
+        pub fn cancel(&mut self) -> Result<(), Error> {
+            let caller = self.env().caller();
+            if caller != self.owner {
+                return Err(Error::NotOwner);
+            }
+
+            if self.is_released || self.is_cancelled {
+                return Err(Error::AlreadyFinalized);
+            }
+
+            if self.funds == 0 {
+                return Err(Error::InsufficientFunds);
+            }
+
+            // Mark the contract as canceled.
+            self.is_cancelled = true;
+
+            // Refund the funds to the owner.
+            self.env()
+                .transfer(self.owner, self.funds)
+                .expect("Transfer failed");
+
+            Ok(())
+        }
+
+        /// Returns the amount of funds deposited in the contract.
+        #[ink(message)]
+        pub fn get_funds(&self) -> Balance {
+            self.funds
+        }
+
+        /// Returns the status of the contract (released or canceled).
+        #[ink(message)]
+        pub fn get_status(&self) -> (bool, bool) {
+            (self.is_released, self.is_cancelled)
         }
     }
 
-    /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
-    /// module and test functions are marked with a `#[test]` attribute.
-    /// The below code is technically just normal Rust code.
+    /// Unit tests for the contract.
     #[cfg(test)]
     mod tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
         use super::*;
 
-        /// We test if the default constructor does its job.
         #[ink::test]
-        fn default_works() {
-            let trustbridge_contract = TrustbridgeContract::default();
-            assert_eq!(trustbridge_contract.get(), false);
+        fn new_contract_works() {
+            let owner = AccountId::from([0x1; 32]);
+            let beneficiary = AccountId::from([0x2; 32]);
+            let contract = EscrowContract::new(owner, beneficiary);
+
+            assert_eq!(contract.get_funds(), 0);
+            assert_eq!(contract.get_status(), (false, false));
         }
 
-        /// We test a simple use case of our contract.
         #[ink::test]
-        fn it_works() {
-            let mut trustbridge_contract = TrustbridgeContract::new(false);
-            assert_eq!(trustbridge_contract.get(), false);
-            trustbridge_contract.flip();
-            assert_eq!(trustbridge_contract.get(), true);
-        }
-    }
+        fn deposit_works() {
+            let owner = AccountId::from([0x1; 32]);
+            let beneficiary = AccountId::from([0x2; 32]);
+            let mut contract = EscrowContract::new(owner, beneficiary);
 
-
-    /// This is how you'd write end-to-end (E2E) or integration tests for ink! contracts.
-    ///
-    /// When running these you need to make sure that you:
-    /// - Compile the tests with the `e2e-tests` feature flag enabled (`--features e2e-tests`)
-    /// - Are running a Substrate node which contains `pallet-contracts` in the background
-    #[cfg(all(test, feature = "e2e-tests"))]
-    mod e2e_tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
-        use super::*;
-
-        /// A helper function used for calling contract messages.
-        use ink_e2e::ContractsBackend;
-
-        /// The End-to-End test `Result` type.
-        type E2EResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-        /// We test that we can upload and instantiate the contract using its default constructor.
-        #[ink_e2e::test]
-        async fn default_works(mut client: ink_e2e::Client<C, E>) -> E2EResult<()> {
-            // Given
-            let mut constructor = TrustbridgeContractRef::default();
-
-            // When
-            let contract = client
-                .instantiate("trustbridge_contract", &ink_e2e::alice(), &mut constructor)
-                .submit()
-                .await
-                .expect("instantiate failed");
-            let call_builder = contract.call_builder::<TrustbridgeContract>();
-
-            // Then
-            let get = call_builder.get();
-            let get_result = client.call(&ink_e2e::alice(), &get).dry_run().await?;
-            assert!(matches!(get_result.return_value(), false));
-
-            Ok(())
+            // Simulate a deposit of 100 units.
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(owner);
+            ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(100);
+            assert_eq!(contract.deposit(), Ok(()));
+            assert_eq!(contract.get_funds(), 100);
         }
 
-        /// We test that we can read and write a value from the on-chain contract.
-        #[ink_e2e::test]
-        async fn it_works(mut client: ink_e2e::Client<C, E>) -> E2EResult<()> {
-            // Given
-            let mut constructor = TrustbridgeContractRef::new(false);
-            let contract = client
-                .instantiate("trustbridge_contract", &ink_e2e::bob(), &mut constructor)
-                .submit()
-                .await
-                .expect("instantiate failed");
-            let mut call_builder = contract.call_builder::<TrustbridgeContract>();
+        #[ink::test]
+        fn release_funds_works() {
+            let owner = AccountId::from([0x1; 32]);
+            let beneficiary = AccountId::from([0x2; 32]);
+            let mut contract = EscrowContract::new(owner, beneficiary);
 
-            let get = call_builder.get();
-            let get_result = client.call(&ink_e2e::bob(), &get).dry_run().await?;
-            assert!(matches!(get_result.return_value(), false));
+            // Simulate a deposit of 100 units.
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(owner);
+            ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(100);
+            assert_eq!(contract.deposit(), Ok(()));
 
-            // When
-            let flip = call_builder.flip();
-            let _flip_result = client
-                .call(&ink_e2e::bob(), &flip)
-                .submit()
-                .await
-                .expect("flip failed");
+            // Simulate the release of funds by the beneficiary.
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(beneficiary);
+            assert_eq!(contract.release_funds(), Ok(()));
+            assert_eq!(contract.get_status(), (true, false));
+        }
 
-            // Then
-            let get = call_builder.get();
-            let get_result = client.call(&ink_e2e::bob(), &get).dry_run().await?;
-            assert!(matches!(get_result.return_value(), true));
+        #[ink::test]
+        fn cancel_works() {
+            let owner = AccountId::from([0x1; 32]);
+            let beneficiary = AccountId::from([0x2; 32]);
+            let mut contract = EscrowContract::new(owner, beneficiary);
 
-            Ok(())
+            // Simulate a deposit of 100 units.
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(owner);
+            ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(100);
+            assert_eq!(contract.deposit(), Ok(()));
+
+            // Simulate the cancellation of the contract by the owner.
+            ink::env::test::set_caller::<ink::env::DefaultEnvironment>(owner);
+            assert_eq!(contract.cancel(), Ok(()));
+            assert_eq!(contract.get_status(), (false, true));
         }
     }
 }
