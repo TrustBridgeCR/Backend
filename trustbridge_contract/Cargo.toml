@@ -14,9 +14,7 @@ std = [
     "scale/std",
     "scale-info/std",
 ]
-
 [lib]
-name = "trustbridge_escrow"
 path = "../trustbridge_contract/trustbridge_escrow.rs"
 
 [profile.release]

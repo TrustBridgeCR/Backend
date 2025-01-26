@@ -2,7 +2,6 @@
 
 #[ink::contract]
 mod trustbridge_contract {
-    use ink::storage::traits::StorageLayout;
     use ink::storage::Mapping;
 
     #[ink(storage)]
@@ -12,7 +11,7 @@ mod trustbridge_contract {
         admin: AccountId,
     }
 
-    #[derive(scale::Decode, scale::Encode, Clone, StorageLayout)]
+    #[derive(scale::Decode, scale::Encode, Clone)]
     #[cfg_attr(feature = "std", derive(Debug, PartialEq, Eq, scale_info::TypeInfo))]
     pub struct EscrowDetails {
         amount: Balance,
@@ -84,6 +83,10 @@ mod trustbridge_contract {
         #[ink(message)]
         pub fn release_funds(&mut self, escrow_id: u32) -> Result<(), Error> {
             let escrow = self.escrows.get(&escrow_id).ok_or(Error::EscrowNotFound)?;
+
+            if !escrow.is_active {
+                return Err(Error::EscrowNotActive);
+            }
 
             if self.env().caller() != escrow.arbiter {
                 return Err(Error::NotAuthorized);
