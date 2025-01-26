@@ -4,6 +4,7 @@
 mod trustbridge_contract {
     use ink::storage::Mapping;
 
+    // Core storage for managing multiple escrows
     #[ink(storage)]
     pub struct TrustbridgeContract {
         escrows: Mapping<u32, EscrowDetails>,
@@ -11,6 +12,7 @@ mod trustbridge_contract {
         admin: AccountId,
     }
 
+    // Details of a single escrow transaction
     #[derive(scale::Decode, scale::Encode, Clone)]
     #[cfg_attr(feature = "std", derive(Debug, PartialEq, Eq, scale_info::TypeInfo))]
     pub struct EscrowDetails {
@@ -21,6 +23,7 @@ mod trustbridge_contract {
         is_active: bool,
     }
 
+    // Events emitted during key operations
     #[ink(event)]
     pub struct EscrowCreated {
         #[ink(topic)]
@@ -54,6 +57,7 @@ mod trustbridge_contract {
             }
         }
 
+        // Main function to create and fund a new escrow
         #[ink(message, payable)]
         pub fn create_escrow(
             &mut self,
@@ -74,26 +78,17 @@ mod trustbridge_contract {
 
             self.escrows.insert(escrow_id, &escrow);
             self.next_escrow_id += 1;
-
             self.env().emit_event(EscrowCreated { escrow_id, amount });
-
             Ok(())
         }
 
+        // Function for arbiter to release funds to beneficiary
         #[ink(message)]
         pub fn release_funds(&mut self, escrow_id: u32) -> Result<(), Error> {
             let escrow = self.escrows.get(&escrow_id).ok_or(Error::EscrowNotFound)?;
 
-            if !escrow.is_active {
-                return Err(Error::EscrowNotActive);
-            }
-
-            if self.env().caller() != escrow.arbiter {
+            if !escrow.is_active || self.env().caller() != escrow.arbiter {
                 return Err(Error::NotAuthorized);
-            }
-
-            if !escrow.is_active {
-                return Err(Error::EscrowNotActive);
             }
 
             self.env()
@@ -108,10 +103,10 @@ mod trustbridge_contract {
                 escrow_id,
                 amount: escrow.amount,
             });
-
             Ok(())
         }
 
+        // Query function to check escrow status
         #[ink(message)]
         pub fn get_escrow(&self, escrow_id: u32) -> Option<EscrowDetails> {
             self.escrows.get(&escrow_id)
@@ -121,13 +116,14 @@ mod trustbridge_contract {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use ink::env::test;
 
         #[ink::test]
         fn create_escrow_works() {
-            let accounts = ink::env::test::default_accounts::<ink::env::DefaultEnvironment>();
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             let mut contract = TrustbridgeContract::new();
 
-            ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(100);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(100);
             assert!(contract
                 .create_escrow(accounts.bob, accounts.charlie)
                 .is_ok());
