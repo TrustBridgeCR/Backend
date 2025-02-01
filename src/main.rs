@@ -5,6 +5,10 @@ use std::{env, net::SocketAddr};
 
 mod config;
 mod routes;
+mod services;
+mod models;
+mod schema;
+mod tests;
 
 fn load_env() {
     dotenv().ok();
