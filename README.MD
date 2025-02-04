@@ -68,7 +68,6 @@ Traditional online transactions lack a trustless mechanism for fund management. 
 
 4. Build and Run:
    ```bash
-   cargo install diesel_cli --no-default-features --features postgres
    cargo build
    cargo run
    ```
