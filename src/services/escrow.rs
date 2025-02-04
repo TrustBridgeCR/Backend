@@ -2,20 +2,88 @@ use crate::models::escrow::{Escrow, EscrowStatus};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::PgConnection;
+use stellar_sdk::{Client, Network, Keypair, TransactionBuilder};
+use std::str::FromStr;
+type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
 type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 
+pub struct StellarConfig {
+    pub network: Network,
+    pub horizon_url: String,
+    pub escrow_keypair: Keypair,
+}
+
+impl StellarConfig {
+    pub fn from_env() -> Self {
+        dotenv::dotenv().ok();
+        
+        let network = match std::env::var("STELLAR_NETWORK")
+            .unwrap_or_else(|_| "testnet".to_string()).as_str() {
+            "mainnet" => Network::Public,
+            _ => Network::Testnet,
+        };
+
+        let horizon_url = std::env::var("STELLAR_HORIZON_URL")
+            .unwrap_or_else(|_| "https://horizon-testnet.stellar.org".to_string());
+
+        let secret_key = std::env::var("STELLAR_ESCROW_SECRET_KEY")
+            .expect("STELLAR_ESCROW_SECRET_KEY must be set");
+
+        Self {
+            network,
+            horizon_url,
+            escrow_keypair: Keypair::from_secret_seed(&secret_key)
+                .expect("Invalid Stellar secret key"),
+        }
+    }
+
+    pub fn create_client(&self) -> Client {
+        Client::new(&self.horizon_url, self.network)
+    }
+}
+
 pub struct EscrowService {
     pool: DbPool,
+    stellar_config: StellarConfig
 }
 
 impl EscrowService {
-    pub fn new(database_url: &str) -> Self {
+    pub fn new(database_url: &str, stellar_config: StellarConfig) -> Self {
         let manager = ConnectionManager::<PgConnection>::new(database_url);
         let pool = r2d2::Pool::builder()
             .build(manager)
             .expect("Failed to create pool.");
-        EscrowService { pool }
+        
+        EscrowService { 
+            pool,
+            stellar_config 
+        }
+    }
+
+    pub async fn create_stellar_escrow(&self, new_escrow: Escrow) -> Result<Escrow, String> {
+        let db_escrow = self.create_escrow(new_escrow).await?;
+        let client = self.stellar_config.create_client();
+
+        let source_account = client.load_account(&self.stellar_config.escrow_keypair.public_key()).map_err(|e| format!("Failed to load Stellar account: {:?}", e))?;
+
+        let transaction = TransactionBuilder::new(&source_account, &self.stellar_config.network)
+            .add_operation(Operation::Payment {
+                destination: Keypair::from_public_key(&db_escrow.recipient_public_key).map_err(|e| format!("Invalid recipient key: {:?}", e))?,
+                asset: stellar_sdk::Asset::native(),
+                amount: db_escrow.loan_amount as f64,
+            })
+            .add_memo(Memo::Text("Escrow Transaction"))
+            .build()
+            .map_err(|e| format!("Failed to build Stellar transaction: {:?}", e))?;
+
+        let signed_tx = transaction.sign(&self.stellar_config.escrow_keypair, &self.stellar_config.network);
+
+        let response = client.submit_transaction(&signed_tx).map_err(|e| format!("Failed to submit Stellar transaction: {:?}", e))?;
+
+        println!("Stellar transaction successful: {:?}", response);
+        
+        Ok(db_escrow)
     }
 
     pub async fn create_escrow(&self, new_escrow: Escrow) -> Result<Escrow, String> {
