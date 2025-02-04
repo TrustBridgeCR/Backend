@@ -8,6 +8,7 @@ pub struct Config {
     pub firebase_private_key: String,
     pub firebase_client_email: String,
     pub api_secret_key: String,
+    pub jwt_secret: String,
 }
 
 impl Config {
@@ -21,6 +22,7 @@ impl Config {
             firebase_client_email: env::var("FIREBASE_CLIENT_EMAIL")
                 .expect("Missing FIREBASE_CLIENT_EMAIL"),
             api_secret_key: env::var("API_SECRET_KEY").expect("Missing API_SECRET_KEY"),
+            jwt_secret: env::var("JWT_SECRET").expect("Missing JWT_SECRET"),
         }
     }
 }
