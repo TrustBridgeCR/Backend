@@ -13,5 +13,6 @@ log = "0.4"
 pretty_env_logger = "0.5"
 diesel = { version = "2.1.0", features = ["postgres", "r2d2"] }
 r2d2 = "0.8"
-stellar-sdk = "0.3.1"
-stellar-base = "0.3.1"
+stellar_sdk = "0.1.4"
+stellar-base = "0.5.0"
+
