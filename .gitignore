@@ -1,6 +1,3 @@
 /target
-# env files (can opt-in for committing if needed)
-.env
-!.env.local
 diesel.toml
 .keep
